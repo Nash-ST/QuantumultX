@@ -1,0 +1,252 @@
+/**
+ * ==========================================
+ * 中国移动 App Cookie 自动获取脚本
+ * China Mobile CC Cookie Auto Extractor
+ * ==========================================
+ * 适用平台: Quantumult X (iOS)
+ * 版本: 2.0.0
+ * 更新日期: 2026-06-22
+ * 作者: Nash-ST
+ * 
+ * 功能: 通过拦截中国移动App的HTTP请求，自动提取并保存Cookie
+ * 存储键名: cm_cookie
+ * 
+ * 使用方法:
+ * 1. 将此脚本放入圈x的 scripts 目录
+ * 2. 在圈x配置中添加重写规则 (见下方示例)
+ * 3. 打开中国移动App，Cookie会自动捕获并保存
+ * 4. 在其他脚本中通过  引用
+ * 
+ * 重写规则示例:
+ * [rewrite_local]
+ * ^https?:\/\/.*10086\.cn url script-request-header cmcc_cookie.js
+ * ^https?:\/\/.*10086\.cn url script-response-body cmcc_cookie.js
+ * 
+ * [MITM]
+ * hostname = %.10086.cn
+ * 
+ * 免责声明: 本脚本仅供个人学习研究使用，请勿用于商业用途。
+ */
+
+// ==================== 常量定义 ====================
+const ENV_KEY = 'cm_cookie';
+const TARGET_DOMAIN = '10086.cn';
+const USER_AGENT = 'ChinaMobile/10.0.0 (iPhone; iOS 16.0; Scale/3.00)';
+
+// ==================== 主入口 ====================
+(async () => {
+  // 判断运行模式
+  if () {
+    // 请求模式 - 拦截发出的请求
+    await handleRequest();
+  } else if () {
+    // 响应模式 - 拦截收到的响应
+    await handleResponse();
+  } else {
+    // 测试模式 - 验证已保存的Cookie
+    await testCookie();
+  }
+  
+  ({});
+})();
+
+// ==================== 请求处理 ====================
+
+async function handleRequest(request) {
+  const url = request.url || '';
+  const headers = request.headers || {};
+  
+  // 检查是否为中国移动域名
+  if (!isChinaMobileUrl(url)) {
+    return ({});
+  }
+  
+  // 从请求头中提取 Cookie
+  const cookie = headers['Cookie'] || headers['cookie'] || '';
+  
+  if (cookie && cookie.length > 0) {
+    // 去重并保存
+    const cleaned = deduplicateCookies(cookie);
+    await saveCookie(cleaned);
+  }
+  
+  // 同时保存完整请求信息用于调试
+  if (isDebugMode()) {
+    console.log('[REQ] ' + request.method + ' ' + url);
+  }
+  
+  ({});
+}
+
+// ==================== 响应处理 ====================
+
+async function handleResponse(response) {
+  const url = response.url || '';
+  const headers = response.headers || {};
+  const body = response.body || '';
+  
+  // 检查是否为中国移动域名
+  if (!isChinaMobileUrl(url)) {
+    return ({});
+  }
+  
+  // 从 Set-Cookie 响应头中提取
+  let cookie = headers['Set-Cookie'] || headers['set-cookie'] || '';
+  
+  if (!cookie && body) {
+    // 尝试从JSON响应体中提取Token信息
+    cookie = extractFromJsonBody(body);
+  }
+  
+  if (cookie && cookie.length > 0) {
+    await saveCookie(cookie);
+    
+    if (isDebugMode()) {
+      console.log('[RES] Cookie saved, length: ' + cookie.length);
+    }
+  }
+  
+  ({});
+}
+
+// ==================== 工具函数 ====================
+
+/**
+ * 判断URL是否为中国移动域名
+ */
+function isChinaMobileUrl(url) {
+  if (!url) return false;
+  return url.includes(TARGET_DOMAIN);
+}
+
+/**
+ * 去重Cookie字段
+ */
+function deduplicateCookies(cookieStr) {
+  const seen = new Map();
+  const parts = cookieStr.split(';');
+  
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed) {
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        const key = trimmed.substring(0, eqIdx).trim();
+        seen.set(key, trimmed);
+      }
+    }
+  }
+  
+  return Array.from(seen.values()).join('; ');
+}
+
+/**
+ * 从JSON响应体中提取Token/Session
+ */
+function extractFromJsonBody(body) {
+  if (!body || body.length < 10) return '';
+  
+  let json;
+  try {
+    json = JSON.parse(body);
+  } catch (e) {
+    return '';
+  }
+  
+  // 常见Token字段名
+  const tokenFields = [
+    'token', 'Token', 'TOKEN', 'accessToken', 'access_token',
+    'sessionId', 'session_id', 'sid', 'SID', 'SESSION',
+    'uid', 'userId', 'user_id', 'LOGIN_NAME', 'phone', 'PHONE'
+  ];
+  
+  const cookies = [];
+  
+  // 搜索顶层字段
+  for (const key of Object.keys(json)) {
+    for (const target of tokenFields) {
+      if (key.toLowerCase() === target.toLowerCase()) {
+        const val = json[key];
+        if (val != null) {
+          cookies.push(key + '=' + String(val));
+        }
+        break;
+      }
+    }
+  }
+  
+  // 搜索嵌套的data字段
+  if (json.data && typeof json.data === 'object') {
+    for (const [key, val] of Object.entries(json.data)) {
+      if (val != null && typeof val !== 'object') {
+        cookies.push(key + '=' + String(val));
+      }
+    }
+  }
+  
+  return cookies.join('; ');
+}
+
+/**
+ * 保存Cookie到圈x持久化存储
+ */
+async function saveCookie(cookie) {
+  // 优先使用  (圈x原生API)
+  if (typeof  !== 'undefined' && ) {
+    .write(cookie, ENV_KEY);
+    return;
+  }
+  
+  // 备选: 使用  (圈x兼容API)
+  if (typeof  !== 'undefined' && ) {
+    .setValueForKey(cookie, ENV_KEY);
+    return;
+  }
+  
+  // 备选: 使用  (Surge兼容)
+  if (typeof  !== 'undefined' &&  && .persistentStore) {
+    .persistentStore.write(cookie, ENV_KEY);
+    return;
+  }
+  
+  // 最后备选: 写入 stdout 供外部捕获
+  console.log(JSON.stringify({ env_key: ENV_KEY, cookie: cookie }));
+}
+
+/**
+ * 测试模式 - 验证已保存的Cookie
+ */
+async function testCookie() {
+  const cookie = readCookie();
+  
+  if (!cookie || cookie.length < 5) {
+    console.log('Cookie未获取，请先打开中国移动App');
+    return;
+  }
+  
+  console.log('Cookie已保存，长度: ' + cookie.length + ' 字符');
+  console.log('前50字符: ' + cookie.substring(0, 50));
+}
+
+/**
+ * 读取Cookie
+ */
+function readCookie() {
+  if (typeof  !== 'undefined' && ) {
+    return .read(ENV_KEY);
+  }
+  if (typeof  !== 'undefined' && ) {
+    return .valueForKey(ENV_KEY);
+  }
+  if (typeof  !== 'undefined' && ) {
+    return .vars?.[ENV_KEY] || '';
+  }
+  return '';
+}
+
+/**
+ * 检查是否开启调试
+ */
+function isDebugMode() {
+  return false; // 生产环境关闭调试
+}
